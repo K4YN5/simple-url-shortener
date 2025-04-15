@@ -1,46 +1,3 @@
-=> ./main.rs
-use std::sync::{Arc, Mutex};
-
-use axum::{
-    Json, Router,
-    extract::{Path, State},
-    response::IntoResponse,
-    routing::{get, post},
-};
-use url_shortener::{Service, Storage};
-
-#[tokio::main]
-async fn main() {
-    let storage = Arc::new(Mutex::new(Storage::new()));
-
-    let app = Router::new()
-        .route("/", post(get_code))
-        .route("/{code}", get(get_url))
-        .with_state(storage);
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
-}
-
-async fn get_url(
-    State(storage): State<Arc<Mutex<Storage>>>,
-    Path(code): Path<u64>,
-) -> impl IntoResponse {
-    let storage = storage.lock().unwrap();
-
-    Service::process_get(&storage, code)
-}
-
-async fn get_code(
-    State(storage): State<Arc<Mutex<Storage>>>,
-    Json(url): Json<url_shortener::Url>,
-) -> impl IntoResponse {
-    let mut storage = storage.lock().unwrap();
-
-    Service::process_post(&mut storage, url)
-}
-
-
 => ./lib.rs
 mod service;
 mod storage;
@@ -80,80 +37,88 @@ impl From<Url> for String {
 }
 
 
-=> ./storage.rs
-#![allow(clippy::new_without_default)]
-use std::{collections::HashMap, sync::Arc};
+=> ./main.rs
+use std::sync::Arc;
 
-use crate::{Code, Service, Url};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    response::IntoResponse,
+    routing::{get, post},
+};
+use url_shortener::{Service, Storage};
 
-// For now i will only use a std hashmap and everything in memory, later i will use a custom
-// hashmap function and also a sqlite database for much larger data.
-#[derive(Clone)]
-pub struct Storage {
-    /// Stores the short codes to long codes for GET
-    code_to_url: HashMap<Code, Arc<Url>>,
+#[tokio::main]
+async fn main() {
+    let storage = Storage::new();
+    let service = Arc::new(Service::new(storage));
 
-    /// Stores the long codes to short code for when using POST to shorten a url find duplicates
-    url_to_code: HashMap<Arc<Url>, Code>,
+    let app = Router::new()
+        .route("/", post(get_code))
+        .route("/{code}", get(get_url))
+        .with_state(service);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
 }
 
-impl Storage {
-    pub fn new() -> Self {
-        Self {
-            code_to_url: HashMap::new(),
-            url_to_code: HashMap::new(),
-        }
-    }
+async fn get_url(State(service): State<Arc<Service>>, Path(code): Path<u64>) -> impl IntoResponse {
+    service.process_get(code)
+}
 
-    pub fn get(&self, code: u64) -> Option<Url> {
-        let url_ref = self.code_to_url.get(&code.into())?;
-        Some((**url_ref).clone())
-    }
-
-    pub fn insert(&mut self, url: &str) -> Code {
-        let url: Url = url.to_string().into();
-
-        let code = Service::hash(url.clone());
-
-        let url = Arc::new(url);
-
-        self.code_to_url.insert(code.clone(), url.clone());
-        self.url_to_code.insert(url, code.clone());
-
-        code
-    }
-
-    pub fn inverted_get(&self, url: &str) -> Option<Code> {
-        let url: Url = url.into();
-        self.url_to_code.get(&url).cloned()
-    }
+async fn get_code(
+    State(service): State<Arc<Service>>,
+    Json(url): Json<url_shortener::Url>,
+) -> impl IntoResponse {
+    service.process_post(url)
 }
 
 
 => ./service.rs
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::{Arc, Mutex},
+};
 
 use axum::response::{IntoResponse, Response};
 
 use crate::{Code, Storage, Url};
 
-pub struct Service {}
+pub struct Service {
+    storage: Arc<Mutex<Storage>>,
+}
 
+#[allow(dead_code)]
 impl Service {
-    pub fn process_post(storage: &mut Storage, url: Url) -> Response {
-        if !Self::is_strict_valid_url(&url.0) {
+    pub fn new(storage: Storage) -> Self {
+        Self {
+            storage: Arc::new(Mutex::new(storage)),
+        }
+    }
+
+    pub fn process_post(&self, url: Url) -> Response {
+        let storage = self.storage.lock().unwrap();
+
+        if let Some(code) = storage.inverted_get(&url.0) {
+            return axum::Json(code).into_response();
+        };
+
+        let is_url_a = Self::is_valid_public_url(&url.0);
+
+        if !is_url_a {
             return (axum::http::StatusCode::NOT_ACCEPTABLE, "Invalid URL").into_response();
         }
-        let code: Code = if let Some(code) = storage.inverted_get(&url.0) {
-            code
-        } else {
-            storage.insert(&url.0)
-        };
+
+        let mut storage = storage;
+
+        let code: Code = storage.insert(&url.0);
 
         axum::Json(code).into_response()
     }
 
-    pub fn process_get(storage: &Storage, code: u64) -> Response {
+    pub fn process_get(&self, code: u64) -> Response {
+        let storage = self.storage.lock().unwrap();
+
         match storage.get(code) {
             Some(url) => axum::response::Redirect::permanent(&url.0).into_response(),
             None => (
@@ -174,10 +139,105 @@ impl Service {
         }
     }
 
+    pub fn is_valid_public_url(url: &str) -> bool {
+        // Must start with http:// or https://
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return false;
+        }
+
+        // Strip scheme
+        let without_scheme = match url.split_once("://") {
+            Some((_, rest)) => rest,
+            None => return false,
+        };
+
+        // Extract the hostname
+        let host = without_scheme
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split('@') // avoid userinfo
+            .next_back()
+            .unwrap_or("")
+            .split(':') // ignore port if present
+            .next()
+            .unwrap_or("");
+
+        // Reject IP addresses
+        if host.parse::<std::net::IpAddr>().is_ok() {
+            return false;
+        }
+
+        // Basic domain validation: at least one dot, valid chars
+        if !host.contains('.') {
+            return false;
+        }
+
+        if !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+        {
+            return false;
+        }
+
+        true
+    }
+
     pub fn hash(url: Url) -> Code {
         let mut hasher = DefaultHasher::new();
         url.hash(&mut hasher);
         Code(hasher.finish())
+    }
+}
+
+
+=> ./storage.rs
+#![allow(clippy::new_without_default)]
+use std::{collections::HashMap, sync::Arc};
+
+use dashmap::DashMap;
+
+use crate::{Code, Service, Url};
+
+#[derive(Clone)]
+pub struct Storage {
+    code_to_url: DashMap<Code, Arc<Url>>,
+    url_to_code: DashMap<Arc<Url>, Code>,
+}
+
+impl Storage {
+    pub fn new() -> Self {
+        Self {
+            code_to_url: DashMap::new(),
+            url_to_code: DashMap::new(),
+        }
+    }
+
+    pub fn get(&self, code: u64) -> Option<Url> {
+        let url_ref = self.code_to_url.get(&code.into())?;
+        Some((**url_ref).clone())
+    }
+
+    pub fn length(&self) -> usize {
+        self.code_to_url.len()
+    }
+
+    pub fn insert(&mut self, url: &str) -> Code {
+        let url: Url = url.to_string().into();
+
+        let code = Service::hash(url.clone());
+
+        let url = Arc::new(url);
+
+        self.code_to_url.insert(code.clone(), url.clone());
+        self.url_to_code.insert(url, code.clone());
+
+        code
+    }
+
+    pub fn inverted_get(&self, url: &str) -> Option<Code> {
+        let url: Url = url.into();
+        self.url_to_code.get(&url).map(|r| r.clone())
     }
 }
 

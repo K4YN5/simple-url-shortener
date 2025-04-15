@@ -1,24 +1,21 @@
 #![allow(clippy::new_without_default)]
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
+
+use dashmap::DashMap;
 
 use crate::{Code, Service, Url};
 
-// For now i will only use a std hashmap and everything in memory, later i will use a custom
-// hashmap function and also a sqlite database for much larger data.
 #[derive(Clone)]
 pub struct Storage {
-    /// Stores the short codes to long codes for GET
-    code_to_url: HashMap<Code, Arc<Url>>,
-
-    /// Stores the long codes to short code for when using POST to shorten a url find duplicates
-    url_to_code: HashMap<Arc<Url>, Code>,
+    code_to_url: DashMap<Code, Arc<Url>>,
+    url_to_code: DashMap<Arc<Url>, Code>,
 }
 
 impl Storage {
     pub fn new() -> Self {
         Self {
-            code_to_url: HashMap::new(),
-            url_to_code: HashMap::new(),
+            code_to_url: DashMap::new(),
+            url_to_code: DashMap::new(),
         }
     }
 
@@ -27,7 +24,11 @@ impl Storage {
         Some((**url_ref).clone())
     }
 
-    pub fn insert(&mut self, url: &str) -> Code {
+    pub fn length(&self) -> usize {
+        self.code_to_url.len()
+    }
+
+    pub fn insert(&self, url: &str) -> Code {
         let url: Url = url.to_string().into();
 
         let code = Service::hash(url.clone());
@@ -42,6 +43,6 @@ impl Storage {
 
     pub fn inverted_get(&self, url: &str) -> Option<Code> {
         let url: Url = url.into();
-        self.url_to_code.get(&url).cloned()
+        self.url_to_code.get(&url).map(|r| r.clone())
     }
 }

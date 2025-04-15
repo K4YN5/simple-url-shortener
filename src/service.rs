@@ -1,27 +1,49 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::Arc,
+};
 
-use axum::response::{IntoResponse, Response};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 
 use crate::{Code, Storage, Url};
 
-pub struct Service {}
+pub struct Service {
+    storage: Arc<Storage>,
+}
 
+#[allow(dead_code)]
 impl Service {
-    pub fn process_post(storage: &mut Storage, url: Url) -> Response {
-        if !Self::is_strict_valid_url(&url.0) {
-            return (axum::http::StatusCode::NOT_ACCEPTABLE, "Invalid URL").into_response();
+    pub fn new(storage: Storage) -> Self {
+        Self {
+            storage: Arc::new(storage),
         }
-        let code: Code = if let Some(code) = storage.inverted_get(&url.0) {
-            code
-        } else {
-            storage.insert(&url.0)
+    }
+
+    pub fn process_post(&self, url: Url) -> Response {
+        if let Some(code) = self.storage.inverted_get(&url.0) {
+            return axum::Json(code).into_response();
         };
+
+        let is_url_a = Self::is_valid_public_url(&url.0);
+
+        if !is_url_a {
+            return (axum::http::StatusCode::NOT_FOUND, "Invalid URL").into_response();
+        }
+
+        let code: Code = self.storage.insert(&url.0);
 
         axum::Json(code).into_response()
     }
 
-    pub fn process_get(storage: &Storage, code: u64) -> Response {
-        match storage.get(code) {
+    pub fn length(&self) -> Response {
+        (StatusCode::OK, self.storage.length().to_string()).into_response()
+    }
+
+    pub fn process_get(&self, code: u64) -> Response {
+        match self.storage.get(code) {
             Some(url) => axum::response::Redirect::permanent(&url.0).into_response(),
             None => (
                 axum::http::StatusCode::NOT_FOUND,
@@ -39,6 +61,50 @@ impl Service {
         } else {
             false
         }
+    }
+
+    pub fn is_valid_public_url(url: &str) -> bool {
+        // Must start with http:// or https://
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return false;
+        }
+
+        // Strip scheme
+        let without_scheme = match url.split_once("://") {
+            Some((_, rest)) => rest,
+            None => return false,
+        };
+
+        // Extract the hostname
+        let host = without_scheme
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split('@') // avoid userinfo
+            .next_back()
+            .unwrap_or("")
+            .split(':') // ignore port if present
+            .next()
+            .unwrap_or("");
+
+        // Reject IP addresses
+        if host.parse::<std::net::IpAddr>().is_ok() {
+            return false;
+        }
+
+        // Basic domain validation: at least one dot, valid chars
+        if !host.contains('.') {
+            return false;
+        }
+
+        if !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+        {
+            return false;
+        }
+
+        true
     }
 
     pub fn hash(url: Url) -> Code {
