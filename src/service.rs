@@ -30,6 +30,7 @@ impl Service {
         let is_url_a = Self::is_valid_public_url(&url.0);
 
         if !is_url_a {
+            eprintln!("Invalid URL: {}", url.0);
             return (axum::http::StatusCode::NOT_FOUND, "Invalid URL").into_response();
         }
 
@@ -64,35 +65,30 @@ impl Service {
     }
 
     pub fn is_valid_public_url(url: &str) -> bool {
-        // Must start with http:// or https://
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             return false;
         }
 
-        // Strip scheme
         let without_scheme = match url.split_once("://") {
             Some((_, rest)) => rest,
             None => return false,
         };
 
-        // Extract the hostname
         let host = without_scheme
             .split('/')
             .next()
             .unwrap_or("")
-            .split('@') // avoid userinfo
+            .split('@')
             .next_back()
             .unwrap_or("")
-            .split(':') // ignore port if present
+            .split(':')
             .next()
             .unwrap_or("");
 
-        // Reject IP addresses
         if host.parse::<std::net::IpAddr>().is_ok() {
             return false;
         }
 
-        // Basic domain validation: at least one dot, valid chars
         if !host.contains('.') {
             return false;
         }

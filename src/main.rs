@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
 };
@@ -16,6 +18,7 @@ async fn main() {
     let app = Router::new()
         .route("/", post(get_code))
         .route("/length", get(length))
+        .route("/echo", post(echo))
         .route("/{code}", get(get_url))
         .with_state(service);
 
@@ -29,7 +32,10 @@ async fn get_url(State(service): State<Arc<Service>>, Path(code): Path<u64>) -> 
 async fn length(State(service): State<Arc<Service>>) -> impl IntoResponse {
     service.length()
 }
-
+async fn echo(body: Bytes) -> impl IntoResponse {
+    eprintln!("{body:?}");
+    (StatusCode::OK, body)
+}
 async fn get_code(
     State(service): State<Arc<Service>>,
     Json(url): Json<url_shortener::Url>,
