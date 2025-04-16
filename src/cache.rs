@@ -11,6 +11,12 @@ pub struct CachableStorage {
     database: DB,
 }
 
+impl CachableStorage {
+    pub async fn shutdown(&self) {
+        self.database.shutdown().await
+    }
+}
+
 impl Storages for CachableStorage {
     async fn new() -> Self {
         Self {

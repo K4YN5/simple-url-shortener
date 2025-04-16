@@ -10,6 +10,13 @@ pub struct DB {
     pool: Pool<Sqlite>,
 }
 
+impl DB {
+    pub async fn shutdown(&self) {
+        self.pool.close().await;
+        log::trace!("Shutting down database");
+    }
+}
+
 impl Storages for DB {
     async fn new() -> Self
     where
@@ -38,6 +45,7 @@ impl Storages for DB {
                     conn.execute("PRAGMA foreign_keys = ON;").await?;
                     conn.execute("PRAGMA synchronous = NORMAL;").await?;
                     conn.execute("PRAGMA busy_timeout = 5000;").await?;
+                    conn.execute("PRAGMA wal_autocheckpoint = 500;").await?;
                     Ok(())
                 })
             })
