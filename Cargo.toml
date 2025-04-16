@@ -5,7 +5,18 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8.3"
-dashmap = "6.1.0"
+log = "0.4.27"
+mini-moka = "0.10.3"
 serde = { version = "1.0.219", features = ["derive"] }
+sqlx = { version = "0.8.4", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1.44.2", features = ["full"] }
-url = "2.5.4"
+
+[profile.pgo]
+inherits = "release"
+opt-level = 3
+panic = 'abort'
+codegen-units = 1
+lto = true
+debug = false
+incremental = false
+overflow-checks = false

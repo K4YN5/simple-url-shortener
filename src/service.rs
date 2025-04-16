@@ -1,5 +1,5 @@
 use std::{
-    hash::{DefaultHasher, Hash, Hasher},
+    hash::{DefaultHasher, Hasher},
     sync::Arc,
 };
 
@@ -8,22 +8,23 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::{Code, Storage, Url};
+use crate::{Hash, Url, cache::CachableStorage, storage::Storages};
 
 pub struct Service {
-    storage: Arc<Storage>,
+    storage: Arc<CachableStorage>,
 }
 
 #[allow(dead_code)]
 impl Service {
-    pub fn new(storage: Storage) -> Self {
+    pub async fn new() -> Self {
+        let storage = CachableStorage::new().await;
         Self {
             storage: Arc::new(storage),
         }
     }
 
-    pub fn process_post(&self, url: Url) -> Response {
-        if let Some(code) = self.storage.inverted_get(&url.0) {
+    pub async fn process_post(&self, url: Url) -> Response {
+        if let Some(code) = self.storage.get_key_by_value(&url).await {
             return axum::Json(code).into_response();
         };
 
@@ -34,33 +35,25 @@ impl Service {
             return (axum::http::StatusCode::NOT_FOUND, "Invalid URL").into_response();
         }
 
-        let code: Code = self.storage.insert(&url.0);
+        let hash = Service::hash(&url);
 
-        axum::Json(code).into_response()
+        self.storage.insert(url, hash.clone()).await;
+
+        axum::Json(hash).into_response()
     }
 
-    pub fn length(&self) -> Response {
-        (StatusCode::OK, self.storage.length().to_string()).into_response()
+    pub async fn length(&self) -> Response {
+        (StatusCode::OK, self.storage.length().await.to_string()).into_response()
     }
 
-    pub fn process_get(&self, code: u64) -> Response {
-        match self.storage.get(code) {
+    pub async fn process_get(&self, code: u64) -> Response {
+        match self.storage.get(code.into()).await {
             Some(url) => axum::response::Redirect::permanent(&url.0).into_response(),
             None => (
                 axum::http::StatusCode::NOT_FOUND,
                 "URL not found in our system",
             )
                 .into_response(),
-        }
-    }
-
-    fn is_strict_valid_url(s: &str) -> bool {
-        if let Ok(url) = url::Url::parse(s) {
-            matches!(url.scheme(), "http" | "https")
-                && url.has_host()
-                && url.host_str().map(|h| h.contains('.')).unwrap_or(false)
-        } else {
-            false
         }
     }
 
@@ -103,9 +96,9 @@ impl Service {
         true
     }
 
-    pub fn hash(url: Url) -> Code {
+    pub fn hash(url: &Url) -> Hash {
         let mut hasher = DefaultHasher::new();
-        url.hash(&mut hasher);
-        Code(hasher.finish())
+        std::hash::Hash::hash(&url, &mut hasher);
+        Hash(hasher.finish())
     }
 }

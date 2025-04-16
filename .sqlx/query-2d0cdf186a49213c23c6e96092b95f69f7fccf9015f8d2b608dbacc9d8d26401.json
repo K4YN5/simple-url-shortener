@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "CREATE INDEX IF NOT EXISTS idx_url ON mainstorage(url);",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "2d0cdf186a49213c23c6e96092b95f69f7fccf9015f8d2b608dbacc9d8d26401"
+}

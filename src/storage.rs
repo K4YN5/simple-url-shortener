@@ -1,48 +1,18 @@
-#![allow(clippy::new_without_default)]
-use std::sync::Arc;
+use crate::{Hash, Url};
 
-use dashmap::DashMap;
+pub trait Storages: Send + Sync {
+    async fn new() -> Self
+    where
+        Self: Sized;
 
-use crate::{Code, Service, Url};
+    /// Get the Url for a hash
+    async fn get(&self, hash: Hash) -> Option<Url>;
+    /// Get the hash for a Url
+    async fn get_key_by_value(&self, url: &Url) -> Option<Hash>;
 
-#[derive(Clone)]
-pub struct Storage {
-    code_to_url: DashMap<Code, Arc<Url>>,
-    url_to_code: DashMap<Arc<Url>, Code>,
-}
+    /// Insert a Url into the storage, returns it's hash
+    async fn insert(&self, url: Url, hash: Hash);
 
-impl Storage {
-    pub fn new() -> Self {
-        Self {
-            code_to_url: DashMap::new(),
-            url_to_code: DashMap::new(),
-        }
-    }
-
-    pub fn get(&self, code: u64) -> Option<Url> {
-        let url_ref = self.code_to_url.get(&code.into())?;
-        Some((**url_ref).clone())
-    }
-
-    pub fn length(&self) -> usize {
-        self.code_to_url.len()
-    }
-
-    pub fn insert(&self, url: &str) -> Code {
-        let url: Url = url.to_string().into();
-
-        let code = Service::hash(url.clone());
-
-        let url = Arc::new(url);
-
-        self.code_to_url.insert(code.clone(), url.clone());
-        self.url_to_code.insert(url, code.clone());
-
-        code
-    }
-
-    pub fn inverted_get(&self, url: &str) -> Option<Code> {
-        let url: Url = url.into();
-        self.url_to_code.get(&url).map(|r| r.clone())
-    }
+    /// Returns the current length of the storage: number of different Urls
+    async fn length(&self) -> usize;
 }

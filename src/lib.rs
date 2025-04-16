@@ -1,19 +1,20 @@
+mod cache;
+mod db;
 mod service;
 mod storage;
 
 use serde::{Deserialize, Serialize};
 pub use service::Service;
-pub use storage::Storage;
 
 #[derive(Serialize, Clone, Eq, PartialEq, Hash)]
-pub struct Code(pub u64);
+pub struct Hash(pub u64);
 
 #[derive(Deserialize, Clone, Eq, PartialEq, Hash)]
 pub struct Url(pub String);
 
-impl From<u64> for Code {
+impl From<u64> for Hash {
     fn from(value: u64) -> Self {
-        Code(value)
+        Hash(value)
     }
 }
 

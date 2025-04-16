@@ -8,12 +8,12 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use url_shortener::{Service, Storage};
+
+use url_shortener::Service;
 
 #[tokio::main]
 async fn main() {
-    let storage = Storage::new();
-    let service = Arc::new(Service::new(storage));
+    let service = Arc::new(Service::new().await);
 
     let app = Router::new()
         .route("/", post(get_code))
@@ -27,10 +27,10 @@ async fn main() {
 }
 
 async fn get_url(State(service): State<Arc<Service>>, Path(code): Path<u64>) -> impl IntoResponse {
-    service.process_get(code)
+    service.process_get(code).await
 }
 async fn length(State(service): State<Arc<Service>>) -> impl IntoResponse {
-    service.length()
+    service.length().await
 }
 async fn echo(body: Bytes) -> impl IntoResponse {
     eprintln!("{body:?}");
@@ -40,5 +40,5 @@ async fn get_code(
     State(service): State<Arc<Service>>,
     Json(url): Json<url_shortener::Url>,
 ) -> impl IntoResponse {
-    service.process_post(url)
+    service.process_post(url).await
 }
