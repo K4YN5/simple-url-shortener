@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq_id FROM mainstorage WHERE url = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c769b93e13c4247ba2eb381a7d1b9ec568f0ffb0a02757994d8f7ab784966ad6"
+}

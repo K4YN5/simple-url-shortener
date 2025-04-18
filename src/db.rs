@@ -4,7 +4,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Executor, Pool, Sqlite};
 
 use crate::storage::Storages;
-use crate::{Hash, Url};
+use crate::{SeqId, Url};
 
 pub struct DB {
     pool: Pool<Sqlite>,
@@ -58,7 +58,7 @@ impl Storages for DB {
         sqlx::query!(
             r#"
             CREATE TABLE IF NOT EXISTS mainstorage (
-                id TEXT PRIMARY KEY NOT NULL, -- Store hash as TEXT for simplicity or INTEGER
+                seq_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url TEXT NOT NULL UNIQUE      -- Ensure URLs are unique
             );
             "#,
@@ -79,11 +79,11 @@ impl Storages for DB {
         Self { pool }
     }
 
-    async fn get(&self, hash: Hash) -> Option<Url> {
-        log::trace!("Searching URL from HASH {} in Sqlite", hash.0);
-        let hash_str = hash.0.to_string();
+    async fn get(&self, id: SeqId) -> Option<Url> {
+        log::trace!("Searching URL from id {} in Sqlite", id.0);
+        let id_str = id.0.to_string();
         let find: Option<String> =
-            sqlx::query_scalar!("SELECT url FROM mainstorage WHERE id = ?", hash_str)
+            sqlx::query_scalar!("SELECT url FROM mainstorage WHERE seq_id = ?", id_str)
                 .fetch_optional(&self.pool)
                 .await
                 .expect("Error retrieving from the db");
@@ -91,40 +91,35 @@ impl Storages for DB {
         find.map(|v| v.into())
     }
 
-    async fn get_key_by_value(&self, url: &Url) -> Option<Hash> {
-        log::trace!("Searching HASH from URL {} in Sqlite", url.0);
-        let find: Option<String> =
-            sqlx::query_scalar!("SELECT id FROM mainstorage WHERE url = ?", url.0)
-                .fetch_optional(&self.pool)
-                .await
-                .expect("Error retrieving from the db");
+    async fn get_key_by_value(&self, url: &Url) -> Option<SeqId> {
+        log::trace!("Searching id from URL {} in Sqlite", url.0);
 
-        find.map(|v| v.parse::<u64>().unwrap().into())
+        match sqlx::query_scalar!("SELECT seq_id FROM mainstorage WHERE url = ?", url.0)
+            .fetch_optional(&self.pool)
+            .await
+            .expect("Error retrieving from the db")
+        {
+            Some(value) => value.map(|x| x.into()),
+            None => None,
+        }
     }
 
-    async fn insert(&self, url: Url, hash: Hash) {
+    async fn insert(&self, url: Url) -> SeqId {
         let url = url.0;
-        let hash_str = hash.0.to_string();
-        sqlx::query!(
-            "INSERT OR IGNORE INTO mainstorage (id, url) VALUES (?, ?)",
-            hash_str, // Bind the hash string
-            url       // Bind the URL string
-        )
-        .execute(&self.pool)
-        .await
-        .expect("Error inserting to db");
+        sqlx::query!("INSERT OR IGNORE INTO mainstorage (url) VALUES (?)", url)
+            .execute(&self.pool)
+            .await
+            .expect("Error inserting to db")
+            .last_insert_rowid()
+            .into()
     }
 
     async fn length(&self) -> usize {
-        sqlx::query_scalar!(
-            // Alias "total" is optional for scalar but good practice; macro infers from first col anyway
-            "SELECT COUNT(*) as total FROM mainstorage" // Type annotation `_: i64` can be added for explicitness if needed:
-                                                        // "SELECT COUNT(*) as total FROM mainstorage", // _: i64
-        )
-        .fetch_one(&self.pool) // Returns Result<i64, Error>
-        .await
-        .expect("Failed retrieving length")
-        .try_into()
-        .unwrap()
+        sqlx::query_scalar!("SELECT COUNT(*) as total FROM mainstorage")
+            .fetch_one(&self.pool)
+            .await
+            .expect("Failed retrieving length")
+            .try_into()
+            .unwrap()
     }
 }

@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use mini_moka::sync::Cache;
 
-use crate::{Hash, Url, db::DB, storage::Storages};
+use crate::{SeqId, Url, db::DB, storage::Storages};
 
 pub struct CachableStorage {
-    hash_to_url_cache: Cache<Hash, Arc<Url>>,
-    url_to_hash_cache: Cache<Arc<Url>, Hash>,
+    id_to_url_cache: Cache<SeqId, Arc<Url>>,
+    url_to_id_cache: Cache<Arc<Url>, SeqId>,
     database: DB,
 }
 
@@ -20,53 +20,56 @@ impl CachableStorage {
 impl Storages for CachableStorage {
     async fn new() -> Self {
         Self {
-            hash_to_url_cache: Cache::new(10_000),
-            url_to_hash_cache: Cache::new(10_000),
+            id_to_url_cache: Cache::new(10_000),
+            url_to_id_cache: Cache::new(10_000),
             database: DB::new().await,
         }
     }
 
-    async fn get(&self, hash: Hash) -> Option<Url> {
-        if let Some(url_arc) = self.hash_to_url_cache.get(&hash) {
+    async fn get(&self, id: SeqId) -> Option<Url> {
+        if let Some(url_arc) = self.id_to_url_cache.get(&id) {
             return Some((*url_arc).clone());
         }
 
-        let db_result = self.database.get(hash.clone()).await;
+        let db_result = self.database.get(id.clone()).await;
 
         if let Some(url) = db_result {
             let url_arc = Arc::new(url.clone());
-            self.hash_to_url_cache.insert(hash.clone(), url_arc.clone());
-            self.url_to_hash_cache.insert(url_arc, hash);
+            self.id_to_url_cache.insert(id.clone(), url_arc.clone());
+            self.url_to_id_cache.insert(url_arc, id);
             Some(url)
         } else {
             None
         }
     }
 
-    async fn get_key_by_value(&self, url: &Url) -> Option<Hash> {
+    async fn get_key_by_value(&self, url: &Url) -> Option<SeqId> {
         let url_arc = Arc::new(url.clone());
 
-        if let Some(hash) = self.url_to_hash_cache.get(&url_arc) {
-            return Some(hash);
+        if let Some(id) = self.url_to_id_cache.get(&url_arc) {
+            return Some(id);
         }
 
         let db_result = self.database.get_key_by_value(url).await;
 
-        if let Some(hash) = db_result {
-            self.hash_to_url_cache.insert(hash.clone(), url_arc.clone());
-            self.url_to_hash_cache.insert(url_arc, hash.clone());
-            Some(hash)
+        if let Some(id) = db_result {
+            self.id_to_url_cache.insert(id.clone(), url_arc.clone());
+            self.url_to_id_cache.insert(url_arc, id.clone());
+            Some(id)
         } else {
             None
         }
     }
 
-    async fn insert(&self, url: Url, hash: Hash) {
-        let url_arc = Arc::new(url.clone());
-        self.hash_to_url_cache.insert(hash.clone(), url_arc.clone());
-        self.url_to_hash_cache.insert(url_arc, hash.clone());
+    async fn insert(&self, url: Url) -> SeqId {
+        let id = self.database.insert(url.clone()).await;
 
-        self.database.insert(url, hash).await;
+        let url_arc = Arc::new(url);
+
+        self.id_to_url_cache.insert(id.clone(), url_arc.clone());
+        self.url_to_id_cache.insert(url_arc, id.clone());
+
+        id
     }
 
     async fn length(&self) -> usize {

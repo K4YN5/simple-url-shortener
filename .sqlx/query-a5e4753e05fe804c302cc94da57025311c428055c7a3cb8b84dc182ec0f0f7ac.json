@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            CREATE TABLE IF NOT EXISTS mainstorage (\n                seq_id INTEGER PRIMARY KEY AUTOINCREMENT,\n                url TEXT NOT NULL UNIQUE      -- Ensure URLs are unique\n            );\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "a5e4753e05fe804c302cc94da57025311c428055c7a3cb8b84dc182ec0f0f7ac"
+}

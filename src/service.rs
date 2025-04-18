@@ -1,14 +1,11 @@
-use std::{
-    hash::{DefaultHasher, Hasher},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 
-use crate::{Hash, Url, cache::CachableStorage, storage::Storages};
+use crate::{Url, cache::CachableStorage, storage::Storages};
 
 pub struct Service {
     storage: Arc<CachableStorage>,
@@ -24,29 +21,37 @@ impl Service {
     }
 
     pub async fn process_post(&self, mut url: Url) -> Response {
-        if !Self::is_valid_url(&mut url) {
-            eprintln!("Invalid URL: {}", url.0);
+        if !Self::normalize_and_validate_url(&mut url) {
+            log::trace!("Invalid url {}", url.0);
             return (axum::http::StatusCode::NOT_FOUND, "Invalid URL").into_response();
         }
 
-        if let Some(code) = self.storage.get_key_by_value(&url).await {
-            return axum::Json(code).into_response();
+        if let Some(id) = self.storage.get_key_by_value(&url).await {
+            return axum::Json(id).into_response();
         };
 
-        let hash = Service::hash(&url);
+        let numerical_id = self.storage.insert(url.clone()).await;
+        let id = base62::encode(numerical_id.0 as u32);
 
-        self.storage.insert(url, hash.clone()).await;
-
-        axum::Json(hash).into_response()
+        axum::Json(id).into_response()
     }
 
     pub async fn length(&self) -> Response {
         (StatusCode::OK, self.storage.length().await.to_string()).into_response()
     }
 
-    pub async fn process_get(&self, code: u64) -> Response {
-        match self.storage.get(code.into()).await {
-            Some(url) => axum::response::Redirect::permanent(&url.0).into_response(),
+    pub async fn process_get(&self, id: String) -> Response {
+        let numerical_id = match base62::decode(id) {
+            Ok(id_u128) => crate::SeqId(id_u128.try_into().unwrap()),
+            Err(_) => {
+                return (axum::http::StatusCode::NOT_FOUND, "Invalid id").into_response();
+            }
+        };
+
+        match self.storage.get(numerical_id).await {
+            Some(url) => {
+                axum::response::Redirect::permanent(&format!("https://{}", url.0)).into_response()
+            }
             None => (
                 axum::http::StatusCode::NOT_FOUND,
                 "URL not found in our system",
@@ -55,7 +60,7 @@ impl Service {
         }
     }
 
-    pub fn is_valid_url(url: &mut Url) -> bool {
+    pub fn normalize_and_validate_url(url: &mut Url) -> bool {
         if url.0.starts_with("http://") {
             url.0 = (url.0[7..]).to_string();
         } else if url.0.starts_with("https://") {
@@ -92,12 +97,6 @@ impl Service {
 
         url.0 = format!("{clean_host}{path_query}");
         true
-    }
-
-    pub fn hash(url: &Url) -> Hash {
-        let mut hasher = DefaultHasher::new();
-        std::hash::Hash::hash(&url, &mut hasher);
-        Hash(hasher.finish())
     }
 
     pub async fn graceful_shutdown(&self) {
