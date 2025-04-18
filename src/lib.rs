@@ -54,7 +54,7 @@ pub async fn shutdown_signal(service_for_shutdown: Arc<Service>) {
     };
 
     #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>(); // On non-unix, just wait for ctrl_c
+    let terminate = std::future::pending::<()>();
 
     tokio::select! {
         _ = ctrl_c => { log::info!("Received Ctrl+C signal.") },
@@ -62,6 +62,5 @@ pub async fn shutdown_signal(service_for_shutdown: Arc<Service>) {
     }
 
     log::info!("Signal received, starting graceful shutdown...");
-    // Now call your application-specific shutdown logic
     service_for_shutdown.graceful_shutdown().await;
 }
